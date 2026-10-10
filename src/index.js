@@ -20,8 +20,6 @@ const GENERAL_ZENO_PAGE =
   "https://zeno.fm/radio/ertu-lathaaat-albrnamg-alaaam/";
 const GENERAL_FALLBACK_HLS =
   "http://livestreaming5.onlinehorizons.net/hls-live/pernamegaam/_definst_/liveevent/livestream.m3u8";
-const RADIO_MASR_MP3 =
-  "https://www.radiomasr.net/wp-content/uploads/2019/06/RadioMasr-Final-64k.mp3";
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -172,15 +170,6 @@ function extractZenoHls(html) {
 }
 
 async function resolveStation(station) {
-  // Radio Masr's official site exposes a direct MP3 source suitable for normal
-  // third-party audio players.
-  if (station.id === 8) {
-    return {
-      ok: true,
-      provider: "radiomasr-official-mp3",
-      url: RADIO_MASR_MP3,
-    };
-  }
 
   // Resolve the General Program dynamically from its public Zeno page so the
   // stable gateway URL survives upstream URL changes.
@@ -227,15 +216,19 @@ async function resolveStation(station) {
 
 function page(stations, origin) {
   const cards = stations
-    .map(
-      (s) => `
+    .map((s) => {
+      const ready = s.id === 10;
+      return `
       <article>
         <strong>${s.name}</strong>
-        <code>${origin}/stream/${s.slug}</code>
-        <button data-copy="${origin}/stream/${s.slug}">Copy</button>
-        <a href="/health/${s.slug}">Health</a>
-      </article>`
-    )
+        ${ready
+          ? `<code>${origin}/stream/${s.slug}</code>
+             <button data-copy="${origin}/stream/${s.slug}">Copy stream link</button>
+             <span class="ok">Ready for testing in The Radio App</span>`
+          : `<span class="bad">Discovered, but no verified third-party-playable stream yet.</span>`}
+        <a href="/health/${s.slug}">Diagnostics</a>
+      </article>`;
+    })
     .join("");
 
   return `<!doctype html>
@@ -249,13 +242,13 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#081426;color:#ff
 article{background:#12223a;padding:16px;border-radius:14px;margin:12px 0;display:grid;gap:10px}
 code{direction:ltr;text-align:left;background:#07101e;padding:10px;border-radius:8px;overflow-wrap:anywhere}
 button{width:max-content;padding:8px 14px;cursor:pointer}a{color:#9cc6ff}
-small{color:#b8c6d9}
+small{color:#b8c6d9}.ok{color:#8fe3a6}.bad{color:#ffb0b0}
 </style>
 </head>
 <body>
 <h1>Egypt Radio Gateway</h1>
 <p>روابط ثابتة لـ The Radio App. قائمة المحطات تُقرأ من فهرس ماسبيرو الرسمي، لذلك الإضافات والحذف تظهر تلقائيًا.</p>
-<small>حاليًا /stream/general لديه مصدر عام متوافق. باقي المحطات تظهر فورًا في القائمة، لكن الرابط لا يُنشر كستريم صالح إلا بعد وجود مصدر مسموح للتشغيل الخارجي.</small>
+<small>Only stations marked Ready have a link intended for The Radio App. Other stations are discovered automatically but are not presented as usable stream links until a verified public source exists.</small>
 ${cards}
 <script>
 document.addEventListener("click", async (e) => {
