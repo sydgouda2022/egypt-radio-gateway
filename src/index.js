@@ -1,5 +1,6 @@
 import {DIRECT_AUDIO_CANDIDATES,findAudioSource,closeSource,audioResponse} from './stream.js';
 import {getBySlug,listRegistry,latestScan,syncRegistry} from './registry.js';
+import {getCatalogFromOfficial} from './catalog.js';
 const json=(x,status=200)=>new Response(JSON.stringify(x,null,2),{
   status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}
 });
@@ -38,6 +39,8 @@ export default {
           json({stations,note:'Catalogue presence does not imply playable audio.'});
       }
       if(path==='/api/sync-status')return json({last_scan:await latestScan(env)});
+      // Read-only preview of official radio section; never mutates D1.
+      if(path==='/api/catalog-preview')return json({stations:await getCatalogFromOfficial()});
       const stream=path.match(/^\/stream\/([a-z0-9-]+)$/i);
       const health=path.match(/^\/health\/([a-z0-9-]+)$/i);
       if(stream||health){
