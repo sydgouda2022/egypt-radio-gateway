@@ -18,6 +18,8 @@ const KNOWN = {
 
 const GENERAL_ZENO_PAGE =
   "https://zeno.fm/radio/ertu-lathaaat-albrnamg-alaaam/";
+const GENERAL_FALLBACK_HLS =
+  "http://livestreaming5.onlinehorizons.net/hls-live/pernamegaam/_definst_/liveevent/livestream.m3u8";
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -181,9 +183,10 @@ async function resolveStation(station) {
       };
     }
     return {
-      ok: false,
-      provider: "zeno",
-      error: "zeno_hls_not_found",
+      ok: true,
+      provider: "zeno-fallback",
+      url: GENERAL_FALLBACK_HLS,
+      note: "Zeno page could not be parsed from the Worker request; using the current HLS URL observed in the Zeno player configuration.",
     };
   }
 
