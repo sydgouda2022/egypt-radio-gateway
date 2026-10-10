@@ -316,6 +316,56 @@ export default {
           return json({ station, ...resolved }, 503);
         }
 
+        // Proxy the working General Program relay so The Radio App receives
+        // stream bytes directly from our stable HTTPS URL instead of validating
+        // a redirect chain.
+        if (station.id === 10 && resolved.provider === "radiotub-relay") {
+          const upstream = await fetch(resolved.url, {
+            redirect: "follow",
+            headers: {
+              accept: "*/*",
+              "user-agent": "EgyptRadioGateway/1.0",
+            },
+          });
+
+          if (!upstream.ok || !upstream.body) {
+            return json(
+              {
+                error: "upstream_stream_unavailable",
+                status: upstream.status,
+                provider: resolved.provider,
+              },
+              502
+            );
+          }
+
+          const headers = new Headers();
+          headers.set(
+            "content-type",
+            upstream.headers.get("content-type") || "audio/mpeg"
+          );
+          headers.set("cache-control", "no-store, no-cache, must-revalidate");
+          headers.set("x-radio-provider", resolved.provider);
+          headers.set("access-control-allow-origin", "*");
+
+          for (const name of [
+            "icy-name",
+            "icy-genre",
+            "icy-br",
+            "icy-description",
+            "icy-url",
+            "icy-metaint",
+          ]) {
+            const value = upstream.headers.get(name);
+            if (value) headers.set(name, value);
+          }
+
+          return new Response(upstream.body, {
+            status: 200,
+            headers,
+          });
+        }
+
         return new Response(null, {
           status: 302,
           headers: {
