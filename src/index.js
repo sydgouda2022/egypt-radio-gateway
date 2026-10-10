@@ -1,394 +1,74 @@
-const MASPERO_INDEX = "https://www.maspero.eg/stream";
-
-const KNOWN = {
-  7: ["quran", "إذاعة القرآن الكريم"],
-  8: ["radio-masr", "إذاعة راديو مصر"],
-  9: ["voice-arabs", "إذاعة صوت العرب"],
-  10: ["general", "إذاعة البرنامج العام"],
-  11: ["youth-sports", "إذاعة الشباب والرياضة"],
-  12: ["cultural", "إذاعة البرنامج الثقافي"],
-  13: ["songs", "إذاعة الأغاني"],
-  14: ["cairo", "إذاعة القاهرة الكبرى"],
-  16: ["middle-east", "إذاعة الشرق الأوسط"],
-  18: ["european", "إذاعة البرنامج الأوروبي"],
-  22: ["directed-2", "الإذاعات الموجهة 2"],
-  23: ["directed-1", "الإذاعات الموجهة 1"],
-  24: ["educational", "راديو التعليمية"],
-};
-
-const GENERAL_ZENO_PAGE =
-  "https://zeno.fm/radio/ertu-lathaaat-albrnamg-alaaam/";
-const GENERAL_FALLBACK_HLS =
-  "http://livestreaming5.onlinehorizons.net/hls-live/pernamegaam/_definst_/liveevent/livestream.m3u8";
-const GENERAL_ALT_HLS = "https://live.egradiotv.com/radio_eg.m3u8";
-const GENERAL_ALT_STREAM = "http://stream.ertu.org:8000/programG";
-const GENERAL_RADIOTUB =
-  "https://stream.radiotub.com/ertu-cairo";
-
-const json = (body, status = 200) =>
-  new Response(JSON.stringify(body, null, 2), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
-  });
-
-const stripHtml = (value = "") =>
-  value
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
-
-const stationSlug = (id) => KNOWN[id]?.[0] || `maspero-${id}`;
-const stationName = (id, label = "") =>
-  KNOWN[id]?.[1] || stripHtml(label) || `محطة ماسبيرو ${id}`;
-
-function parseMasperoIndex(html) {
-  const found = new Map();
-
-  for (const match of html.matchAll(
-    /<a\b[^>]*href=["']([^"']*\/stream\/(\d+)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi
-  )) {
-    const id = Number(match[2]);
-    found.set(id, {
-      id,
-      slug: stationSlug(id),
-      name: stationName(id, match[3]),
-      official_page: new URL(match[1], "https://www.maspero.eg").toString(),
-    });
-  }
-
-  for (const match of html.matchAll(/\/stream\/(\d+)/g)) {
-    const id = Number(match[1]);
-    if (!found.has(id)) {
-      found.set(id, {
-        id,
-        slug: stationSlug(id),
-        name: stationName(id),
-        official_page: `https://www.maspero.eg/stream/${id}`,
-      });
-    }
-  }
-
-  return [...found.values()].sort((a, b) => a.id - b.id);
-}
-
-function extractDailymotionId(html) {
-  const patterns = [
-    /dailymotion\.com\/(?:embed\/)?video\/([a-z0-9]+)/i,
-    /geo\.dailymotion\.com\/player\/[a-z0-9]+\.html\?[^"'<>]*\bvideo=([a-z0-9]+)/i,
-    /[?&]video=([a-z0-9]+)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match) return match[1];
-  }
-  return null;
-}
-
-async function fetchText(url) {
-  const response = await fetch(url, {
-    headers: {
-      accept: "text/html,application/xhtml+xml",
-      "user-agent": "EgyptRadioGateway/1.0",
-    },
-  });
-  if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
-  return response.text();
-}
-
-async function discoverStations() {
-  const html = await fetchText(MASPERO_INDEX);
-  return parseMasperoIndex(html);
-}
-
-async function getStation(slug) {
-  const stations = await discoverStations();
-  return stations.find((s) => s.slug === slug || String(s.id) === slug) || null;
-}
-
-async function inspectDailymotion(videoId) {
-  const metadataUrl =
-    `https://www.dailymotion.com/player/metadata/video/${encodeURIComponent(videoId)}?app=com.dailymotion.neon`;
-
-  const response = await fetch(metadataUrl, {
-    headers: {
-      accept: "application/json",
-      "user-agent": "EgyptRadioGateway/1.0",
-    },
-  });
-
-  if (!response.ok) {
-    return { ok: false, error: `metadata_http_${response.status}` };
-  }
-
-  const metadata = await response.json();
-  if (metadata.error) {
-    return {
-      ok: false,
-      error:
-        metadata.error.code ||
-        metadata.error.raw_message ||
-        "dailymotion_metadata_error",
-    };
-  }
-
-  const hls = [];
-  for (const variants of Object.values(metadata.qualities || {})) {
-    for (const variant of variants || []) {
-      if (
-        variant?.url &&
-        (variant.type === "application/x-mpegURL" ||
-          variant.url.includes(".m3u8"))
-      ) {
-        hls.push(variant.url);
-      }
-    }
-  }
-
-  return {
-    ok: hls.length > 0,
-    video_id: videoId,
-    hls,
-    note:
-      hls.length > 0
-        ? "Dailymotion exposes HLS metadata, but this gateway will not bypass provider domain/app restrictions."
-        : "No HLS entry exposed.",
-  };
-}
-
-function extractZenoHls(html) {
-  const patterns = [
-    /hls_url\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/i,
-    /["']hls_url["']\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i,
-  ];
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match) return match[1].replace(/\\\//g, "/");
-  }
-  return null;
-}
-
-async function probeStream(url) {
-  try {
-    const response = await fetch(url, {
-      redirect: "follow",
-      headers: {
-        accept: "*/*",
-        "user-agent": "EgyptRadioGateway/1.0",
-      },
-    });
-    const type = response.headers.get("content-type") || "";
-    let sample = "";
-    if (type.includes("mpegurl") || type.includes("text") || type.includes("octet-stream")) {
-      const reader = response.body?.getReader();
-      if (reader) {
-        const first = await reader.read();
-        if (first.value) sample = new TextDecoder().decode(first.value.slice(0, 400));
-        try { await reader.cancel(); } catch {}
-      }
-    }
-    return {
-      ok: response.ok,
-      status: response.status,
-      final_url: response.url,
-      content_type: type,
-      sample,
-    };
-  } catch (error) {
-    return { ok: false, error: String(error?.message || error) };
-  }
-}
-
-async function resolveStation(station) {
-
-  // General Program: use the currently working public RadioTub relay.
-  // It starts playback immediately in RadioTub and avoids the slow/dead legacy endpoints.
-  if (station.id === 10) {
-    return {
-      ok: true,
-      provider: "radiotub-relay",
-      url: GENERAL_RADIOTUB,
-    };
-  }
-
-  const pageHtml = await fetchText(station.official_page);
-  const videoId = extractDailymotionId(pageHtml);
-
-  if (!videoId) {
-    return {
-      ok: false,
-      error: "no_compatible_public_stream",
-      note: "No public third-party-playable source is known for this station yet.",
-    };
-  }
-
-  const dm = await inspectDailymotion(videoId);
-  return {
-    ok: false,
-    provider: "dailymotion",
-    video_id: videoId,
-    error: "provider_restricted_or_unverified_for_third_party_playback",
-    dailymotion: dm,
-    note:
-      "The official Dailymotion source is recorded, but the gateway does not republish a provider-restricted signed HLS as an unrestricted stream.",
-  };
-}
-
-function page(stations, origin) {
-  const cards = stations
-    .map((s) => {
-      const ready = s.id === 10;
-      return `
-      <article>
-        <strong>${s.name}</strong>
-        ${ready
-          ? `<code>${origin}/stream/${s.slug}</code>
-             <button data-copy="${origin}/stream/${s.slug}">Copy stream link</button>
-             <span class="ok">Ready for testing in The Radio App</span>`
-          : `<span class="bad">Discovered, but no verified third-party-playable stream yet.</span>`}
-        <a href="/health/${s.slug}">Diagnostics</a>
-      </article>`;
-    })
-    .join("");
-
-  return `<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Egypt Radio Gateway</title>
-<style>
-body{font-family:system-ui,-apple-system,sans-serif;background:#081426;color:#fff;max-width:920px;margin:auto;padding:24px}
-article{background:#12223a;padding:16px;border-radius:14px;margin:12px 0;display:grid;gap:10px}
-code{direction:ltr;text-align:left;background:#07101e;padding:10px;border-radius:8px;overflow-wrap:anywhere}
-button{width:max-content;padding:8px 14px;cursor:pointer}a{color:#9cc6ff}
-small{color:#b8c6d9}.ok{color:#8fe3a6}.bad{color:#ffb0b0}
-</style>
-</head>
-<body>
-<h1>Egypt Radio Gateway</h1>
-<p>روابط ثابتة لـ The Radio App. قائمة المحطات تُقرأ من فهرس ماسبيرو الرسمي، لذلك الإضافات والحذف تظهر تلقائيًا.</p>
-<small>Only stations marked Ready have a link intended for The Radio App. Other stations are discovered automatically but are not presented as usable stream links until a verified public source exists.</small>
-${cards}
-<script>
-document.addEventListener("click", async (e) => {
-  const b = e.target.closest("[data-copy]");
-  if (!b) return;
-  await navigator.clipboard.writeText(b.dataset.copy);
-  const old=b.textContent;b.textContent="Copied";setTimeout(()=>b.textContent=old,1200);
+import {DIRECT_AUDIO_CANDIDATES,findAudioSource,closeSource,audioResponse} from './stream.js';
+import {getBySlug,listRegistry,latestScan,syncRegistry} from './registry.js';
+const json=(x,status=200)=>new Response(JSON.stringify(x,null,2),{
+  status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}
 });
-</script>
-</body></html>`;
+const unavailable=(method='GET')=>new Response(method==='HEAD'?null:'Radio stream currently unavailable',{
+  status:503,headers:{'content-type':'text/plain; charset=utf-8','cache-control':'no-store',
+    'retry-after':'180','access-control-allow-origin':'*'}
+});
+const esc=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function dashboard(stations,origin){
+  const cards=stations.map(s=>{
+    const active=!!DIRECT_AUDIO_CANDIDATES[s.slug]?.length;
+    return '<article><strong>'+esc(s.name)+'</strong><p>'+
+      (active?'Public audio candidates configured, but not yet confirmed playable.':'No confirmed external audio source.')+
+      '</p><a href="/health/'+encodeURIComponent(s.slug)+'">Live Test / Diagnostics</a>'+
+      (active?'<code>'+origin+'/stream/'+encodeURIComponent(s.slug)+'</code>'+
+        '<button data-copy="'+origin+'/stream/'+encodeURIComponent(s.slug)+'">Copy testing link</button>':'')+
+      '<small>Official catalog state: '+esc(s.catalog_state||'unknown')+'</small></article>';
+  }).join('');
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Egypt Radio Gateway</title>'+
+    '<style>body{font-family:system-ui;background:#0e192b;color:#f3f6fc;max-width:850px;margin:auto;padding:20px}article{background:#1a2c44;padding:16px;margin:12px 0;border-radius:12px;display:grid;gap:8px}a{color:#99caff}code{overflow-wrap:anywhere;color:#b8d7ff}button{width:fit-content;padding:8px}small{color:#b7c9df}</style></head><body>'+
+    '<h1>Egypt Radio Gateway</h1><p>Station discovery is not stream verification. Live Test checks HTTP status, MIME and real audio bytes. This gateway does not bypass playback restrictions.</p>'+
+    cards+'<script>document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if(b)navigator.clipboard.writeText(b.dataset.copy).then(()=>b.textContent="Copied")});</script></body></html>';
 }
-
 export default {
-  async fetch(request) {
-    try {
-      const url = new URL(request.url);
-      const path = url.pathname.replace(/\/+$/, "") || "/";
-
-      if (path === "/") {
-        const stations = await discoverStations();
-        return new Response(page(stations, url.origin), {
-          headers: {
-            "content-type": "text/html; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        });
+  async fetch(request,env){
+    const url=new URL(request.url);
+    const path=url.pathname.replace(/\/+$/,'')||'/';
+    if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{
+      'access-control-allow-origin':'*','access-control-allow-methods':'GET, HEAD, OPTIONS','access-control-allow-headers':'*'
+    }});
+    if(!['GET','HEAD'].includes(request.method))return new Response('Method Not Allowed',{status:405,headers:{allow:'GET, HEAD, OPTIONS'}});
+    try{
+      if(path==='/'||path==='/api/stations'){
+        const stations=await listRegistry(env);
+        return path==='/'?new Response(dashboard(stations,url.origin),{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}}):
+          json({stations,note:'Catalogue presence does not imply playable audio.'});
       }
-
-      if (path === "/api/stations") {
-        return json({ stations: await discoverStations() });
-      }
-
-      const streamMatch = path.match(/^\/stream\/([a-z0-9-]+)$/i);
-      if (streamMatch) {
-        const station = await getStation(streamMatch[1]);
-        if (!station) return json({ error: "station_not_found" }, 404);
-
-        const resolved = await resolveStation(station);
-        if (!resolved.ok) {
-          return json({ station, ...resolved }, 503);
+      if(path==='/api/sync-status')return json({last_scan:await latestScan(env)});
+      const stream=path.match(/^\/stream\/([a-z0-9-]+)$/i);
+      const health=path.match(/^\/health\/([a-z0-9-]+)$/i);
+      if(stream||health){
+        const slug=(stream||health)[1];
+        const station=await getBySlug(env,slug);
+        if(!station)return stream?unavailable(request.method):json({error:'station_not_found'},404);
+        const source=await findAudioSource(DIRECT_AUDIO_CANDIDATES[slug]||[]);
+        if(health){
+          const result=source.ok?{
+            status:'verified_audio_at_request_time',mime:source.mime,
+            provider:source.source,first_audio_byte_ms:source.latency_ms
+          }:{status:'unavailable',attempts:source.attempts};
+          await closeSource(source);
+          return json({station,ok:source.ok,...result,checked_at:new Date().toISOString()});
         }
-
-        // Proxy the working General Program relay so The Radio App receives
-        // stream bytes directly from our stable HTTPS URL instead of validating
-        // a redirect chain.
-        if (station.id === 10 && resolved.provider === "radiotub-relay") {
-          const upstream = await fetch(resolved.url, {
-            redirect: "follow",
-            headers: {
-              accept: "*/*",
-              "user-agent": "EgyptRadioGateway/1.0",
-            },
-          });
-
-          if (!upstream.ok || !upstream.body) {
-            return json(
-              {
-                error: "upstream_stream_unavailable",
-                status: upstream.status,
-                provider: resolved.provider,
-              },
-              502
-            );
-          }
-
-          const headers = new Headers();
-          headers.set(
-            "content-type",
-            upstream.headers.get("content-type") || "audio/mpeg"
-          );
-          headers.set("cache-control", "no-store, no-cache, must-revalidate");
-          headers.set("x-radio-provider", resolved.provider);
-          headers.set("access-control-allow-origin", "*");
-
-          for (const name of [
-            "icy-name",
-            "icy-genre",
-            "icy-br",
-            "icy-description",
-            "icy-url",
-            "icy-metaint",
-          ]) {
-            const value = upstream.headers.get(name);
-            if (value) headers.set(name, value);
-          }
-
-          return new Response(upstream.body, {
-            status: 200,
-            headers,
-          });
+        if(!source.ok)return unavailable(request.method);
+        if(request.method==='HEAD'){
+          const result=audioResponse(source,'HEAD');
+          await closeSource(source);
+          return result;
         }
-
-        return new Response(null, {
-          status: 302,
-          headers: {
-            location: resolved.url,
-            "cache-control": "no-store",
-            "x-radio-provider": resolved.provider,
-          },
-        });
+        return audioResponse(source,'GET');
       }
-
-      const healthMatch = path.match(/^\/health\/([a-z0-9-]+)$/i);
-      if (healthMatch) {
-        const station = await getStation(healthMatch[1]);
-        if (!station) return json({ error: "station_not_found" }, 404);
-        return json({ station, result: await resolveStation(station) });
-      }
-
-      return json({ error: "not_found" }, 404);
-    } catch (error) {
-      return json(
-        { error: "internal_error", detail: String(error?.message || error) },
-        500
-      );
+      return json({error:'not_found'},404);
+    }catch(error){
+      // Never send a JSON diagnostics response in a media route.
+      if(path.startsWith('/stream/'))return unavailable(request.method);
+      return json({error:'gateway_error',detail:String(error?.message||error)},503);
     }
   },
+  async scheduled(event,env,ctx){
+    ctx.waitUntil(syncRegistry(env).catch(error=>console.error('catalog_sync_failed',String(error))));
+  }
 };

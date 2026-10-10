@@ -1,9 +1,11 @@
 {
   "name": "egypt-radio-gateway",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/catalog.js && node --check src/registry.js && node --check src/stream.js",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },

@@ -4,5 +4,13 @@
   "main": "src/index.js",
   "compatibility_date": "2026-10-10",
   "workers_dev": true,
-  "preview_urls": true
+  "preview_urls": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "egypt-radio-registry",
+      "database_id": "564505b9-2353-48e3-a5b2-951f56ffdc9a"
+    }
+  ],
+  "triggers": {"crons": ["0 */6 * * *"]}
 }
