@@ -20,6 +20,8 @@ const GENERAL_ZENO_PAGE =
   "https://zeno.fm/radio/ertu-lathaaat-albrnamg-alaaam/";
 const GENERAL_FALLBACK_HLS =
   "http://livestreaming5.onlinehorizons.net/hls-live/pernamegaam/_definst_/liveevent/livestream.m3u8";
+const GENERAL_ALT_HLS = "https://live.egradiotv.com/radio_eg.m3u8";
+const GENERAL_ALT_STREAM = "http://stream.ertu.org:8000/programG";
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -169,25 +171,69 @@ function extractZenoHls(html) {
   return null;
 }
 
-async function resolveStation(station) {
-
-  // Resolve the General Program dynamically from its public Zeno page so the
-  // stable gateway URL survives upstream URL changes.
-  if (station.id === 10) {
-    const zenoHtml = await fetchText(GENERAL_ZENO_PAGE);
-    const hls = extractZenoHls(zenoHtml);
-    if (hls) {
-      return {
-        ok: true,
-        provider: "zeno",
-        url: hls,
-      };
+async function probeStream(url) {
+  try {
+    const response = await fetch(url, {
+      redirect: "follow",
+      headers: {
+        accept: "*/*",
+        "user-agent": "EgyptRadioGateway/1.0",
+      },
+    });
+    const type = response.headers.get("content-type") || "";
+    let sample = "";
+    if (type.includes("mpegurl") || type.includes("text") || type.includes("octet-stream")) {
+      const reader = response.body?.getReader();
+      if (reader) {
+        const first = await reader.read();
+        if (first.value) sample = new TextDecoder().decode(first.value.slice(0, 400));
+        try { await reader.cancel(); } catch {}
+      }
     }
     return {
-      ok: true,
-      provider: "zeno-fallback",
-      url: GENERAL_FALLBACK_HLS,
-      note: "Zeno page could not be parsed from the Worker request; using the current HLS URL observed in the Zeno player configuration.",
+      ok: response.ok,
+      status: response.status,
+      final_url: response.url,
+      content_type: type,
+      sample,
+    };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+async function resolveStation(station) {
+
+  // General Program: validate public candidates before publishing one.
+  if (station.id === 10) {
+    const candidates = [
+      { provider: "egradiotv-hls", url: GENERAL_ALT_HLS },
+      { provider: "ertu-direct", url: GENERAL_ALT_STREAM },
+      { provider: "zeno-fallback", url: GENERAL_FALLBACK_HLS },
+    ];
+
+    for (const candidate of candidates) {
+      const probe = await probeStream(candidate.url);
+      if (probe.ok) {
+        return {
+          ok: true,
+          provider: candidate.provider,
+          url: candidate.url,
+          probe,
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      error: "no_live_general_program_source",
+      probes: await Promise.all(
+        candidates.map(async (candidate) => ({
+          provider: candidate.provider,
+          url: candidate.url,
+          probe: await probeStream(candidate.url),
+        }))
+      ),
     };
   }
 
