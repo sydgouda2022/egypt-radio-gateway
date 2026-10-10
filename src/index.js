@@ -23,7 +23,7 @@ const GENERAL_FALLBACK_HLS =
 const GENERAL_ALT_HLS = "https://live.egradiotv.com/radio_eg.m3u8";
 const GENERAL_ALT_STREAM = "http://stream.ertu.org:8000/programG";
 const GENERAL_RADIOTUB =
-  "https://radio-tv-streams.radiotub.com/streams/eg/Cairo.m3u8";
+  "https://stream.radiotub.com/ertu-cairo";
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
