@@ -16,8 +16,8 @@ const KNOWN = {
   24: ["educational", "راديو التعليمية"],
 };
 
-const GENERAL_ZENO =
-  "https://noctua.zeno.fm/4e8fbd90-608f-40b4-a013-94000250afb0/master.m3u8";
+const GENERAL_ZENO_PAGE =
+  "https://zeno.fm/radio/ertu-lathaaat-albrnamg-alaaam/";
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -155,14 +155,35 @@ async function inspectDailymotion(videoId) {
   };
 }
 
+function extractZenoHls(html) {
+  const patterns = [
+    /hls_url\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/i,
+    /["']hls_url["']\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i,
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match) return match[1].replace(/\\\//g, "/");
+  }
+  return null;
+}
+
 async function resolveStation(station) {
-  // The General Program currently has a public Zeno relay that has been observed
-  // starting playback successfully. This keeps /stream/general stable.
+  // Resolve the General Program dynamically from its public Zeno page so the
+  // stable gateway URL survives upstream URL changes.
   if (station.id === 10) {
+    const zenoHtml = await fetchText(GENERAL_ZENO_PAGE);
+    const hls = extractZenoHls(zenoHtml);
+    if (hls) {
+      return {
+        ok: true,
+        provider: "zeno",
+        url: hls,
+      };
+    }
     return {
-      ok: true,
+      ok: false,
       provider: "zeno",
-      url: GENERAL_ZENO,
+      error: "zeno_hls_not_found",
     };
   }
 
