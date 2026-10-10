@@ -20,6 +20,8 @@ const GENERAL_ZENO_PAGE =
   "https://zeno.fm/radio/ertu-lathaaat-albrnamg-alaaam/";
 const GENERAL_FALLBACK_HLS =
   "http://livestreaming5.onlinehorizons.net/hls-live/pernamegaam/_definst_/liveevent/livestream.m3u8";
+const RADIO_MASR_MP3 =
+  "https://www.radiomasr.net/wp-content/uploads/2019/06/RadioMasr-Final-64k.mp3";
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -170,6 +172,16 @@ function extractZenoHls(html) {
 }
 
 async function resolveStation(station) {
+  // Radio Masr's official site exposes a direct MP3 source suitable for normal
+  // third-party audio players.
+  if (station.id === 8) {
+    return {
+      ok: true,
+      provider: "radiomasr-official-mp3",
+      url: RADIO_MASR_MP3,
+    };
+  }
+
   // Resolve the General Program dynamically from its public Zeno page so the
   // stable gateway URL survives upstream URL changes.
   if (station.id === 10) {
