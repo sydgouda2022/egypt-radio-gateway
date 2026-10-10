@@ -22,6 +22,8 @@ const GENERAL_FALLBACK_HLS =
   "http://livestreaming5.onlinehorizons.net/hls-live/pernamegaam/_definst_/liveevent/livestream.m3u8";
 const GENERAL_ALT_HLS = "https://live.egradiotv.com/radio_eg.m3u8";
 const GENERAL_ALT_STREAM = "http://stream.ertu.org:8000/programG";
+const GENERAL_RADIOTUB =
+  "https://radio-tv-streams.radiotub.com/streams/eg/Cairo.m3u8";
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -204,36 +206,13 @@ async function probeStream(url) {
 
 async function resolveStation(station) {
 
-  // General Program: validate public candidates before publishing one.
+  // General Program: use the currently working public RadioTub relay.
+  // It starts playback immediately in RadioTub and avoids the slow/dead legacy endpoints.
   if (station.id === 10) {
-    const candidates = [
-      { provider: "egradiotv-hls", url: GENERAL_ALT_HLS },
-      { provider: "ertu-direct", url: GENERAL_ALT_STREAM },
-      { provider: "zeno-fallback", url: GENERAL_FALLBACK_HLS },
-    ];
-
-    for (const candidate of candidates) {
-      const probe = await probeStream(candidate.url);
-      if (probe.ok) {
-        return {
-          ok: true,
-          provider: candidate.provider,
-          url: candidate.url,
-          probe,
-        };
-      }
-    }
-
     return {
-      ok: false,
-      error: "no_live_general_program_source",
-      probes: await Promise.all(
-        candidates.map(async (candidate) => ({
-          provider: candidate.provider,
-          url: candidate.url,
-          probe: await probeStream(candidate.url),
-        }))
-      ),
+      ok: true,
+      provider: "radiotub-relay",
+      url: GENERAL_RADIOTUB,
     };
   }
 
